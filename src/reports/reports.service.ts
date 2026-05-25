@@ -1,199 +1,141 @@
-import {
-  Injectable,
-  InternalServerErrorException,
-  NotFoundException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, InternalServerErrorException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { CreateReportDto } from './dto/create-report.dto';
-import { randomUUID } from 'crypto';
+import { UpdateReportDto } from './dto/update-report.dto';
 
 @Injectable()
 export class ReportsService {
-  private readonly logger = new Logger(ReportsService.name);
-
   constructor(private readonly supabaseService: SupabaseService) {}
 
-  async createReport(userId: string, createReportDto: CreateReportDto) {
-    const reportId = createReportDto.id ?? randomUUID();
-    const now = new Date().toISOString();
-
-    const { data, error } = await this.supabaseService
-      .getAdminClient()
-      .from('reports')
-      .insert([
-        {
-          id: reportId,
-          latitude: createReportDto.latitude,
-          longitude: createReportDto.longitude,
-          violation_type: createReportDto.violationType,
-          description: createReportDto.description,
-          image_url: createReportDto.imageUrl ?? null,
-          reported_by: userId,
-          is_verified: false,
-          upvotes: 0,
-          timestamp: now,
-          created_at: now,
-          updated_at: now,
-        },
-      ])
+  async create(userId: string, createReportDto: CreateReportDto) {
+    const supabase = this.supabaseService.getAdminClient();
+    const { data, error } = await supabase
+      .from('community_reports')
+      .insert({
+        user_id: userId,
+        name: createReportDto.name,
+        latitude: createReportDto.latitude,
+        longitude: createReportDto.longitude,
+        violation_type: createReportDto.violationType,
+        description: createReportDto.description,
+        image_url: createReportDto.imageUrl,
+      })
       .select()
       .single();
 
-    if (error) {
-      this.logger.error('Failed to create report', error.message);
-      throw new InternalServerErrorException(`Supabase error: ${error.message}`);
-    }
-
-    return {
-      message: 'Report created successfully',
-      data: this.mapReport(data),
-    };
+    if (error) throw new InternalServerErrorException(error.message);
+    return data;
   }
 
-  async syncReports(reports: CreateReportDto[]) {
-    this.logger.log(`Syncing ${reports.length} reports to Supabase`);
+  async findAll(limit: number = 50, offset: number = 0) {
+    const supabase = this.supabaseService.getAdminClient();
+    const { data, error, count } = await supabase
+      .from('community_reports')
+      .select('*', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
 
-    const formattedReports = reports.map((report) => ({
-      id: report.id ?? randomUUID(),
-      latitude: report.latitude,
-      longitude: report.longitude,
-      violation_type: report.violationType,
-      description: report.description,
-      timestamp: new Date(report.timestamp).toISOString(),
-      reported_by: report.reportedBy,
-      image_url: report.imageUrl ?? null,
-      is_verified: report.isVerified ?? false,
-      upvotes: report.upvotes ?? 0,
-      updated_at: new Date().toISOString(),
-    }));
-
-    const { data, error } = await this.supabaseService
-      .getAdminClient()
-      .from('reports')
-      .upsert(formattedReports, { onConflict: 'id' });
-
-    if (error) {
-      this.logger.error('Failed to sync reports to Supabase', error.message);
-      throw new InternalServerErrorException(`Supabase error: ${error.message}`);
-    }
-
-    return {
-      success: true,
-      syncedCount: reports.length,
-      syncedIds: reports.map((r) => r.id),
-    };
+    if (error) throw new InternalServerErrorException(error.message);
+    return { data, total: count };
   }
 
-  async incrementUpvotes(reportId: string) {
-    this.logger.log(`Incrementing upvotes for report: ${reportId}`);
+  async findNearby(lat: number, lng: number, radiusKm: number = 5) {
+    const supabase = this.supabaseService.getAdminClient();
+    // This is a naive box filter for simplicity. Ideally we'd use PostGIS st_dwithin or earthdistance.
+    const latDelta = radiusKm / 111.0;
+    const lngDelta = radiusKm / (111.0 * Math.cos(lat * (Math.PI / 180)));
 
-    const { data: currentData, error: fetchError } = await this.supabaseService
-      .getAdminClient()
-      .from('reports')
-      .select('upvotes')
-      .eq('id', reportId)
+    const { data, error } = await supabase
+      .from('community_reports')
+      .select('*')
+      .gte('latitude', lat - latDelta)
+      .lte('latitude', lat + latDelta)
+      .gte('longitude', lng - lngDelta)
+      .lte('longitude', lng + lngDelta)
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (error) throw new InternalServerErrorException(error.message);
+    return { reports: data, total: data?.length || 0 };
+  }
+
+  async findOne(id: string) {
+    const supabase = this.supabaseService.getAdminClient();
+    const { data, error } = await supabase
+      .from('community_reports')
+      .select('*')
+      .eq('id', id)
       .single();
 
-    if (fetchError || !currentData) {
-      throw new NotFoundException('Report not found');
-    }
-
-    const newUpvotes = (currentData.upvotes ?? 0) + 1;
-
-    const { error: updateError } = await this.supabaseService
-      .getAdminClient()
-      .from('reports')
-      .update({ upvotes: newUpvotes, updated_at: new Date().toISOString() })
-      .eq('id', reportId);
-
-    if (updateError) {
-      throw new InternalServerErrorException(`Supabase error: ${updateError.message}`);
-    }
-
-    return {
-      success: true,
-      reportId,
-      upvotes: newUpvotes,
-    };
+    if (error) throw new NotFoundException('Report not found');
+    return data;
   }
 
-  async getReportsNearby(
-    latitude: number,
-    longitude: number,
-    radiusKm: number = 5.0,
-  ) {
-    this.logger.log(
-      `Fetching reports near lat:${latitude}, lon:${longitude} radius:${radiusKm}km`,
-    );
+  async upvote(id: string, userId: string) {
+    const supabase = this.supabaseService.getAdminClient();
+    // Simplified upvote
+    const { data: report, error: fetchError } = await supabase
+      .from('community_reports')
+      .select('upvotes')
+      .eq('id', id)
+      .single();
+      
+    if (fetchError) throw new NotFoundException('Report not found');
 
-    const latDelta = radiusKm / 111.0;
-    const lonDelta =
-      radiusKm / (111.0 * Math.cos((latitude * Math.PI) / 180));
+    const { data, error } = await supabase
+      .from('community_reports')
+      .update({ upvotes: (report.upvotes || 0) + 1 })
+      .eq('id', id)
+      .select()
+      .single();
 
-    const { data, error } = await this.supabaseService
-      .getAdminClient()
-      .from('reports')
-      .select('*')
-      .gte('latitude', latitude - latDelta)
-      .lte('latitude', latitude + latDelta)
-      .gte('longitude', longitude - lonDelta)
-      .lte('longitude', longitude + lonDelta)
-      .order('timestamp', { ascending: false });
-
-    if (error) {
-      throw new InternalServerErrorException(`Supabase error: ${error.message}`);
-    }
-
-    return data.map((item) => this.mapReport(item));
+    if (error) throw new InternalServerErrorException(error.message);
+    return data;
   }
 
-  async getAllReports() {
-    const { data, error } = await this.supabaseService
-      .getAdminClient()
-      .from('reports')
-      .select('*')
-      .order('timestamp', { ascending: false });
-
-    if (error) {
-      throw new InternalServerErrorException(`Supabase error: ${error.message}`);
+  async update(id: string, userId: string, updateReportDto: UpdateReportDto) {
+    const supabase = this.supabaseService.getAdminClient();
+    
+    // Check ownership
+    const report = await this.findOne(id);
+    if (report.user_id !== userId) {
+      throw new BadRequestException('You can only update your own reports');
     }
 
-    return data.map((item) => this.mapReport(item));
+    const payload: any = {};
+    if (updateReportDto.name) payload.name = updateReportDto.name;
+    if (updateReportDto.latitude) payload.latitude = updateReportDto.latitude;
+    if (updateReportDto.longitude) payload.longitude = updateReportDto.longitude;
+    if (updateReportDto.violationType) payload.violation_type = updateReportDto.violationType;
+    if (updateReportDto.description) payload.description = updateReportDto.description;
+    if (updateReportDto.imageUrl) payload.image_url = updateReportDto.imageUrl;
+
+    const { data, error } = await supabase
+      .from('community_reports')
+      .update(payload)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw new InternalServerErrorException(error.message);
+    return data;
   }
 
-  async deleteReport(reportId: string) {
-    this.logger.log(`Deleting report: ${reportId}`);
+  async remove(id: string, userId: string) {
+    const supabase = this.supabaseService.getAdminClient();
+    
+    // Check ownership
+    const report = await this.findOne(id);
+    if (report.user_id !== userId) {
+      throw new BadRequestException('You can only delete your own reports');
+    }
 
-    const { error } = await this.supabaseService
-      .getAdminClient()
-      .from('reports')
+    const { error } = await supabase
+      .from('community_reports')
       .delete()
-      .eq('id', reportId);
+      .eq('id', id);
 
-    if (error) {
-      throw new InternalServerErrorException(`Supabase error: ${error.message}`);
-    }
-
-    return { success: true, message: 'Report deleted successfully' };
-  }
-
-  // ─── Private helpers ─────────────────────────────────────────────────────────
-
-  private mapReport(item: any) {
-    return {
-      id: item.id,
-      latitude: item.latitude,
-      longitude: item.longitude,
-      violationType: item.violation_type,
-      description: item.description,
-      timestamp: new Date(item.timestamp).getTime(),
-      reportedBy: item.reported_by,
-      imageUrl: item.image_url,
-      isVerified: item.is_verified === 1 || item.is_verified === true,
-      upvotes: item.upvotes ?? 0,
-      createdAt: new Date(item.created_at ?? item.timestamp).getTime(),
-      updatedAt: new Date(item.updated_at ?? item.timestamp).getTime(),
-    };
+    if (error) throw new InternalServerErrorException(error.message);
+    return { success: true };
   }
 }

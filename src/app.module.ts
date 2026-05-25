@@ -7,8 +7,8 @@ import { SupabaseModule } from './supabase/supabase.module';
 import { AuthModule } from './auth/auth.module';
 import { DetectionsModule } from './detections/detections.module';
 import { AdminModule } from './admin/admin.module';
-import { ReportsModule } from './reports/reports.module';
 import { UploadModule } from './upload/upload.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -36,8 +36,8 @@ import { UploadModule } from './upload/upload.module';
     AuthModule,
     DetectionsModule,
     AdminModule,
-    ReportsModule,
     UploadModule,
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

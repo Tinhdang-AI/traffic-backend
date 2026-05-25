@@ -1,91 +1,64 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Delete,
-  Param,
-  Body,
-  Query,
-  UseGuards,
-  Req,
-  ParseFloatPipe,
-  ParseUUIDPipe,
-} from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Req, Put } from '@nestjs/common';
 import { ReportsService } from './reports.service';
 import { CreateReportDto } from './dto/create-report.dto';
-import { SyncReportsDto } from './dto/sync-reports.dto';
+import { UpdateReportDto } from './dto/update-report.dto';
 import { SupabaseGuard } from '../auth/supabase.guard';
+import { ApiBearerAuth, ApiTags, ApiOperation } from '@nestjs/swagger';
 
 @ApiTags('Reports')
 @Controller('reports')
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
-  @Post()
-  @UseGuards(SupabaseGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Create a new report' })
-  createReport(@Body() createReportDto: CreateReportDto, @Req() req: any) {
-    const userId = req.user.id;
-    return this.reportsService.createReport(userId, createReportDto);
+  @Get()
+  @ApiOperation({ summary: 'Get all reports' })
+  findAll(@Query('limit') limit?: string, @Query('offset') offset?: string) {
+    return this.reportsService.findAll(limit ? parseInt(limit) : 50, offset ? parseInt(offset) : 0);
   }
 
-  @Get()
-  @ApiOperation({ summary: 'Get reports (optionally filtered by location)' })
-  @ApiQuery({ name: 'latitude', type: Number, required: false })
-  @ApiQuery({ name: 'longitude', type: Number, required: false })
-  @ApiQuery({ name: 'radiusKm', type: Number, required: false })
-  getReports(
-    @Query('latitude') latitude?: string,
-    @Query('longitude') longitude?: string,
+  @Get('nearby')
+  @ApiOperation({ summary: 'Get nearby reports' })
+  findNearby(
+    @Query('latitude') lat: string,
+    @Query('longitude') lng: string,
     @Query('radiusKm') radiusKm?: string,
   ) {
-    if (latitude && longitude) {
-      const lat = parseFloat(latitude);
-      const lon = parseFloat(longitude);
-      const radius = radiusKm ? parseFloat(radiusKm) : 5.0;
-      return this.reportsService.getReportsNearby(lat, lon, radius);
-    }
-    return this.reportsService.getAllReports();
+    return this.reportsService.findNearby(
+      parseFloat(lat),
+      parseFloat(lng),
+      radiusKm ? parseFloat(radiusKm) : 5,
+    );
+  }
+
+  @Post()
+  @UseGuards(SupabaseGuard)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'Create a new report' })
+  create(@Req() req, @Body() createReportDto: CreateReportDto) {
+    return this.reportsService.create(req.user.id, createReportDto);
   }
 
   @Post(':id/upvote')
   @UseGuards(SupabaseGuard)
-  @ApiBearerAuth()
+  @ApiBearerAuth('access-token')
   @ApiOperation({ summary: 'Upvote a report' })
-  upvote(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.reportsService.incrementUpvotes(id);
+  upvote(@Param('id') id: string, @Req() req) {
+    return this.reportsService.upvote(id, req.user.id);
+  }
+
+  @Put(':id')
+  @UseGuards(SupabaseGuard)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'Update a report (User only)' })
+  update(@Param('id') id: string, @Req() req, @Body() updateReportDto: UpdateReportDto) {
+    return this.reportsService.update(id, req.user.id, updateReportDto);
   }
 
   @Delete(':id')
   @UseGuards(SupabaseGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Delete a report' })
-  deleteReport(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.reportsService.deleteReport(id);
-  }
-
-  @Post('sync')
-  @UseGuards(SupabaseGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Sync batch of offline reports to cloud database' })
-  sync(@Body() syncReportsDto: SyncReportsDto) {
-    return this.reportsService.syncReports(syncReportsDto.reports);
-  }
-
-  @Get('nearby')
-  @ApiOperation({ summary: 'Retrieve reported violations near coordinates' })
-  @ApiQuery({ name: 'latitude', type: Number, required: true })
-  @ApiQuery({ name: 'longitude', type: Number, required: true })
-  @ApiQuery({ name: 'radiusKm', type: Number, required: false })
-  findNearby(
-    @Query('latitude', ParseFloatPipe) latitude: number,
-    @Query('longitude', ParseFloatPipe) longitude: number,
-    @Query('radiusKm', new ParseFloatPipe({ optional: true })) radiusKm?: number,
-  ) {
-    return this.reportsService.getReportsNearby(latitude, longitude, radiusKm || 5.0);
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'Delete a report (User only)' })
+  remove(@Param('id') id: string, @Req() req) {
+    return this.reportsService.remove(id, req.user.id);
   }
 }
-
-

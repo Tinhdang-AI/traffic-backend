@@ -23,6 +23,7 @@ export class DetectionsService {
           detection_type: createHistoryDto.detectionType,
           description: createHistoryDto.description ?? null,
           image_url: createHistoryDto.imageUrl ?? null,
+          confidence: createHistoryDto.confidence ?? 1.0,
           timestamp: createHistoryDto.timestamp ?? new Date().toISOString(),
           created_at: new Date().toISOString(),
         },

@@ -10,6 +10,12 @@ export class SupabaseService {
     const url = this.configService.get<string>('SUPABASE_URL');
     const serviceRoleKey = this.configService.get<string>('SUPABASE_SERVICE_ROLE_KEY');
 
+    console.log('[SupabaseService] Loaded SUPABASE_URL:', url);
+    console.log('[SupabaseService] Loaded SUPABASE_SERVICE_ROLE_KEY length:', serviceRoleKey ? serviceRoleKey.length : 0);
+    if (serviceRoleKey) {
+      console.log('[SupabaseService] Loaded SUPABASE_SERVICE_ROLE_KEY prefix:', serviceRoleKey.substring(0, 20));
+    }
+
     if (!url || !serviceRoleKey) {
       throw new Error(
         'Missing required env vars: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in .env',
@@ -30,6 +36,23 @@ export class SupabaseService {
    */
   getAdminClient(): SupabaseClient {
     return this.adminClient;
+  }
+
+  /**
+   * Returns a transient, unauthenticated Supabase client using the anon key.
+   * Safe to use for user auth operations (login, refresh session) to prevent
+   * polluting the singleton adminClient's authentication state.
+   */
+  createAuthClient(): SupabaseClient {
+    const url = this.configService.get<string>('SUPABASE_URL')!;
+    const anonKey = this.configService.get<string>('SUPABASE_ANON_KEY')!;
+
+    return createClient(url, anonKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    });
   }
 
   /**

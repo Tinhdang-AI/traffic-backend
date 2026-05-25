@@ -43,23 +43,38 @@ export class AuthService {
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
 
-    const { data, error } = await this.supabaseService
-      .getAdminClient()
-      .auth.signInWithPassword({ email, password });
+    const authClient = this.supabaseService.createAuthClient();
+    const { data, error } = await authClient.auth.signInWithPassword({ email, password });
 
     if (error) {
       throw new UnauthorizedException(error.message);
     }
 
+    // Check if user is in admin_users table (using service role client which bypasses RLS)
+    const { data: adminRow } = await this.supabaseService
+      .getAdminClient()
+      .from('admin_users')
+      .select('user_id')
+      .eq('user_id', data.user.id)
+      .maybeSingle();
+
+    const isAdmin = !!adminRow;
+
     return {
       message: 'Login successful',
-      accessToken: data.session.access_token,
-      refreshToken: data.session.refresh_token,
-      expiresAt: data.session.expires_at,
+      // Wrap session in 'session' key to match Flutter AuthResponseModel.fromJson
+      session: {
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
+        expires_in: data.session.expires_in,
+        expires_at: data.session.expires_at,
+      },
       user: {
         id: data.user.id,
         email: data.user.email,
-        displayName: data.user.user_metadata?.display_name,
+        displayName: data.user.user_metadata?.display_name ?? data.user.email?.split('@')[0],
+        isAdmin,
+        role: isAdmin ? 'admin' : 'user',
       },
     };
   }
@@ -77,9 +92,8 @@ export class AuthService {
   }
 
   async refreshToken(refreshToken: string) {
-    const { data, error } = await this.supabaseService
-      .getAdminClient()
-      .auth.refreshSession({ refresh_token: refreshToken });
+    const authClient = this.supabaseService.createAuthClient();
+    const { data, error } = await authClient.auth.refreshSession({ refresh_token: refreshToken });
 
     if (error || !data.session) {
       throw new UnauthorizedException('Invalid or expired refresh token');

@@ -49,4 +49,13 @@ export class CreateHistoryDto {
   @IsString()
   @IsOptional()
   imageUrl?: string;
+
+  @ApiProperty({
+    description: 'Confidence score of the detection',
+    example: 0.89,
+    required: false,
+  })
+  @IsNumber()
+  @IsOptional()
+  confidence?: number;
 }
