@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { nodeFetch } from '../common/http/node-fetch.helper';
 
 @Injectable()
 export class SupabaseService {
@@ -27,6 +28,8 @@ export class SupabaseService {
         autoRefreshToken: false,
         persistSession: false,
       },
+      // Use Node.js https module instead of undici (fixes ConnectTimeoutError on Windows)
+      global: { fetch: nodeFetch as unknown as typeof fetch },
     });
   }
 
@@ -52,6 +55,8 @@ export class SupabaseService {
         autoRefreshToken: false,
         persistSession: false,
       },
+      // Use Node.js https module instead of undici (fixes ConnectTimeoutError on Windows)
+      global: { fetch: nodeFetch as unknown as typeof fetch },
     });
   }
 
@@ -68,6 +73,8 @@ export class SupabaseService {
         headers: {
           Authorization: `Bearer ${accessToken}`,
         },
+        // Use Node.js https module instead of undici (fixes ConnectTimeoutError on Windows)
+        fetch: nodeFetch as unknown as typeof fetch,
       },
       auth: {
         autoRefreshToken: false,
@@ -76,3 +83,4 @@ export class SupabaseService {
     });
   }
 }
+

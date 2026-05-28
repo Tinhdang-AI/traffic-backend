@@ -41,22 +41,65 @@ export class ReportsService {
 
   async findNearby(lat: number, lng: number, radiusKm: number = 5) {
     const supabase = this.supabaseService.getAdminClient();
-    // This is a naive box filter for simplicity. Ideally we'd use PostGIS st_dwithin or earthdistance.
-    const latDelta = radiusKm / 111.0;
-    const lngDelta = radiusKm / (111.0 * Math.cos(lat * (Math.PI / 180)));
+    const radiusMeters = radiusKm * 1000;
 
     const { data, error } = await supabase
-      .from('community_reports')
-      .select('*')
-      .gte('latitude', lat - latDelta)
-      .lte('latitude', lat + latDelta)
-      .gte('longitude', lng - lngDelta)
-      .lte('longitude', lng + lngDelta)
-      .order('created_at', { ascending: false })
-      .limit(100);
+      .rpc('get_nearby_approved_signs', {
+        lat: lat,
+        lng: lng,
+        radius_meters: radiusMeters,
+      });
 
-    if (error) throw new InternalServerErrorException(error.message);
-    return { reports: data, total: data?.length || 0 };
+    if (error) {
+      // Fallback if RPC doesn't exist yet (for smooth migration)
+      const latDelta = radiusKm / 111.0;
+      const lngDelta = radiusKm / (111.0 * Math.cos(lat * (Math.PI / 180)));
+
+      const { data: fallbackData, error: fallbackError } = await supabase
+        .from('community_reports')
+        .select('*')
+        .eq('status', 'verified')
+        .gte('latitude', lat - latDelta)
+        .lte('latitude', lat + latDelta)
+        .gte('longitude', lng - lngDelta)
+        .lte('longitude', lng + lngDelta)
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (fallbackError) throw new InternalServerErrorException(fallbackError.message);
+      
+      const mapped = (fallbackData || []).map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        latitude: r.latitude,
+        longitude: r.longitude,
+        violationType: r.violation_type,
+        description: r.description,
+        upvotes: r.upvotes,
+        createdAt: r.created_at,
+        userId: r.user_id,
+        imageUrl: r.image_url,
+        isVerified: r.is_verified,
+      }));
+      return { reports: mapped, total: mapped.length };
+    }
+
+    // Map approved signs to match what Mobile App expects
+    const reports = (data || []).map((item: any) => ({
+      id: item.id,
+      name: `Approved Sign: ${item.label}`,
+      latitude: item.latitude,
+      longitude: item.longitude,
+      violationType: item.label,
+      description: `Traffic sign approved by community voting. (${item.reports_count} reports, ${item.upvotes} votes)`,
+      upvotes: item.upvotes,
+      createdAt: item.created_at || item.updated_at || new Date().toISOString(),
+      userId: 'system',
+      imageUrl: null,
+      isVerified: true,
+    }));
+
+    return { reports, total: reports.length };
   }
 
   async findOne(id: string) {

@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Post,
   Patch,
   Delete,
   Param,
@@ -21,13 +22,25 @@ import {
 import { AdminService } from './admin.service';
 import { SupabaseGuard } from '../auth/supabase.guard';
 import { AdminGuard } from './admin.guard';
+import { ClusteringService } from './clustering.service';
 
 @ApiTags('Admin')
 @Controller('admin')
 @UseGuards(SupabaseGuard, AdminGuard)
 @ApiBearerAuth('access-token')
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly clusteringService: ClusteringService,
+  ) {}
+
+  @Post('cluster')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Trigger DBSCAN spatial clustering on pending reports' })
+  @ApiResponse({ status: 200, description: 'Clustering ran successfully' })
+  triggerClustering() {
+    return this.clusteringService.runClustering();
+  }
 
   @Get('dashboard/stats')
   @ApiOperation({ summary: 'Get dashboard statistics (users, reports, history counts)' })
